@@ -1,0 +1,3 @@
+BOOTSTRAP_URL = "http://localhost:5000"
+START_PORT = 5000
+MAX_PORT_TRIES = 50
