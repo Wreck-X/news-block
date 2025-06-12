@@ -11,7 +11,7 @@ if __name__ == '__main__':
     port = find_free_port(START_PORT, MAX_PORT_TRIES)
     try_register_with_bootstrap(port)
 
-    print(f"Node started at http://localhost:{port}")
+    print(f"Node started at http://0.0.0.0:{port}")
 
-    app.run(host='localhost', port=port)
+    app.run(host='0.0.0.0', port=port)
 

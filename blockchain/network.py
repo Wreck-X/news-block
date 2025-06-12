@@ -9,6 +9,18 @@ from news import insert_news
 
 other_nodes = set()
 
+def get_local_ip():
+    """Returns the IP address of this machine on the LAN."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
+
 def gossip_news(news, fanout=2):
     """Spread news to a random subset of peers, ensuring the news is synced across nodes."""
     peers = list(other_nodes)
@@ -16,11 +28,9 @@ def gossip_news(news, fanout=2):
 
     for peer in selected_peers:
         try:
-            # Send news to peer
             response = requests.post(f"{peer}/gossip", json=news, timeout=3)
             if response.status_code == 200:
-                # Sync the news into the database if it's new
-                insert_news(news['headline'],news['body'], news['author'])
+                insert_news(news['headline'], news['body'], news['author'])
         except requests.exceptions.RequestException:
             continue
 
@@ -31,8 +41,8 @@ def sync_news_with_peer(peer_url):
         if response.status_code == 200:
             all_news = response.json().get('news', [])
             for news_item in all_news:
-                if not is_news_in_db(news_item):  # Ensure we don't duplicate news
-                    insert_news(news_item['headline'],news_item['body'],news_item['author'])
+                if not is_news_in_db(news_item):
+                    insert_news(news_item['headline'], news_item['body'], news_item['author'])
     except requests.exceptions.RequestException:
         pass
 
@@ -50,7 +60,7 @@ def find_free_port(start_port, max_tries):
     for port in range(start_port, start_port + max_tries):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
-                s.bind(('localhost', port))
+                s.bind(('0.0.0.0', port))  # binds to all interfaces (0.0.0.0)
                 s.listen(1)
                 return port
             except OSError:
@@ -60,7 +70,8 @@ def find_free_port(start_port, max_tries):
 def try_register_with_bootstrap(port):
     """Try registering the node with the bootstrap node."""
     global this_node_url
-    this_node_url = f"http://localhost:{port}"
+    ip = get_local_ip()
+    this_node_url = f"http://{ip}:{port}"
 
     if port == 5000:
         print("Bootstrap node, no need to register.")
@@ -76,7 +87,7 @@ def try_register_with_bootstrap(port):
             other_nodes.discard(this_node_url)
             print(f"Connected to network via {BOOTSTRAP_URL}")
         else:
-            print(f"Failed to connect to bootstrap node.")
+            print("Failed to connect to bootstrap node.")
     except requests.exceptions.RequestException:
         print("Bootstrap node not reachable, starting new network.")
 
