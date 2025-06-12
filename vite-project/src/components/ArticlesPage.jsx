@@ -14,12 +14,10 @@ function ArticlesPage() {
 
     setLoading(true);
 
-    const apiKey = '4cc4b288e6ac4891a71c7cb1252b0bf3'; 
-
-    fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent(searchTerm)}&apiKey=${apiKey}`)
+    fetch(`http://localhost:5000/search?q=${encodeURIComponent(searchTerm)}`)
       .then((res) => res.json())
       .then((data) => {
-        setArticles(data.articles);
+        setArticles(data.results || []);
         setLoading(false);
       })
       .catch((error) => {
@@ -38,18 +36,19 @@ function ArticlesPage() {
           <p className="text-gray-600">No articles found.</p>
         ) : (
           <ul className="space-y-4">
-            {articles.map((article) => (
+            {articles.map((article, index) => (
               <li
-                key={article.url}
+                key={index}
                 className="p-4 bg-white rounded shadow hover:shadow-md transition"
               >
-                <p className="text-sm text-gray-500 mb-2">{new Date(article.publishedAt).toLocaleDateString()}</p>
-                <h2 className="text-xl font-semibold mb-2">
-                  <a href={article.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                    {article.title}
-                  </a>
+                <p className="text-sm text-gray-500 mb-2">
+                  {new Date(article.date).toLocaleDateString()}
+                </p>
+                <h2 className="text-xl font-semibold mb-2 text-blue-700">
+                  {article.headline}
                 </h2>
-                <p className="text-gray-700">{article.description}</p>
+                <p className="text-gray-700">{article.body}</p>
+                <p className="text-sm text-gray-600 mt-2">— {article.author}</p>
               </li>
             ))}
           </ul>
@@ -60,3 +59,4 @@ function ArticlesPage() {
 }
 
 export default ArticlesPage;
+

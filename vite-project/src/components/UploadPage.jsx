@@ -3,20 +3,40 @@ import React, { useState } from 'react';
 function UploadPage() {
   const [headline, setHeadline] = useState('');
   const [articleBody, setArticleBody] = useState('');
-  const [attachedFile, setAttachedFile] = useState(null);
+  const [author, setAuthor] = useState('');
 
-  const handleFileChange = (e) => {
-    setAttachedFile(e.target.files[0]);
+
+const handleSubmit = async (e) => {
+  e.preventDefault();
+
+  const article = {
+    headline,
+    body: articleBody,
+    author
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    // Send headline, articleBody, attachedFile to backend here
-    console.log('Headline:', headline);
-    console.log('Article Body:', articleBody);
-    console.log('Attached File:', attachedFile);
-    alert('Article queued for verification!');
-  };
+  try {
+    const response = await fetch('http://localhost:5000/news', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(article)
+    });
+
+    const data = await response.json();
+    if (response.ok) {
+      alert('Article queued for verification!');
+      console.log(data);
+    } else {
+      alert(`Error: ${data.message}`);
+    }
+  } catch (error) {
+    console.error('Error submitting article:', error);
+    alert('Failed to submit article.');
+  }
+}; 
+
 
   return (
     <div className="min-h-screen bg-gray-100 p-4 flex items-center justify-center">
@@ -43,24 +63,14 @@ function UploadPage() {
           rows={6}
           className="w-full p-2 mb-4 border border-gray-300 rounded"
         />
-
-        {/* File attachment
-        <div className="mb-4">
-          <label className="block mb-2 text-sm font-medium text-gray-700">
-            Attach related images:
-          </label>
-          <input
-            type="file"
-            onChange={handleFileChange}
-            className="w-full text-sm text-gray-700"
-            accept="image/*"
-          />
-          {attachedFile && (
-            <p className="mt-2 text-sm text-gray-500">{attachedFile.name}</p>
-          )}
-        </div> */}
-
-        {/* Submit button */}
+        
+        <input
+          type='text'
+          value={author}
+          onChange={(e) => setAuthor(e.target.value)}
+          placeholder="Author"
+          className='w-full p-2 mb-4 border border-gray-300 rounded'
+        />
         <button
           type="submit"
           className="bg-blue-500 text-white px-4 py-2 rounded w-full hover:bg-blue-600"
