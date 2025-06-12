@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {Search} from 'lucide-react';
-
+import ArticlesPage from './ArticlesPage';
+import UploadPage from './UploadPage';
+import { useNavigate } from 'react-router-dom';
 function HomePage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -9,6 +11,8 @@ function HomePage() {
   
   const fullText = "Millions of works, articles, and collections.";
   
+  const navigate = useNavigate();
+
   useEffect(() => {
     if (currentIndex < fullText.length) {
       const timeout = setTimeout(() => {
@@ -22,11 +26,15 @@ function HomePage() {
 
   const handleSearch = (e) => {
     e.preventDefault();
-    // In a real app, you would navigate here
-    console.log('Searching for:', searchTerm);
+    if (searchTerm.trim()) {
+      // Navigate to /articles?query=your-search-term
+      navigate(`/articles?search=${encodeURIComponent(searchTerm)}`);
+    }
   };
 
   const handleNavigate = (path) => {
+    
+    navigate(path)
     // In a real app, you would navigate here
     console.log('Navigating to:', path);
     setDropdownOpen(false); // close dropdown on mobile after click
@@ -41,7 +49,7 @@ function HomePage() {
           src="/Pinecone-cropped.png" 
           alt="Logo" 
           className="h-20 w-80 object-contain"
-        />
+                />
       </div>
 
       {/* Top-right buttons (desktop) */}
