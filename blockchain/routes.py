@@ -1,10 +1,22 @@
 from flask import Blueprint, request, jsonify
 from news import validate_news, get_all_news, insert_news
-from network import gossip_news, other_nodes, sync_news_with_peer
+from network import gossip_news, other_nodes, sync_news_with_peer, has_consensus
 
 import sqlite3
 
 bp = Blueprint('routes', __name__)
+
+def news_in_db(news):
+    conn = sqlite3.connect("news.db")
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT 1 FROM news WHERE headline = ? AND body = ? AND author = ?",
+        (news["headline"], news["body"], news["author"])
+    )
+    exists = cursor.fetchone() is not None
+    conn.close()
+    return exists
+
 
 @bp.route('/news', methods=['POST'])
 def receive_news():
@@ -14,10 +26,16 @@ def receive_news():
         return jsonify({"message": "No JSON data provided!"}), 400
 
     if validate_news(news):
-        if news not in get_all_news():  # Avoid duplicates
-            insert_news(news['headline'], news['body'], news['author']) # Store the news in the database
-            gossip_news(news)  # Spread the news to peers
-        return jsonify({"message": "News received and gossip started!", "news": news}), 200
+       
+
+        if not news_in_db(news):
+            if has_consensus(news):
+                insert_news(news['headline'], news['body'], news['author'])
+                gossip_news(news)
+                return jsonify({"message": "News accepted after consensus and gossip started!", "news": news}), 200
+            else:
+                return jsonify({"message": "Consensus not reached. News rejected."}), 403
+
 
     return jsonify({"message": "Invalid news format!"}), 400
 
@@ -118,10 +136,20 @@ def vote_article(article_id):
 
     conn = sqlite3.connect("news.db")
     cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO approvals (article_id, approved) VALUES (?, ?)", 
-        (article_id, approved)
-    )
+# Fetch the updated article and gossip it
+    cursor.execute("SELECT headline, body, author, approved FROM news WHERE id = ?", (article_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if row:
+        updated_news = {
+            "headline": row[0],
+            "body": row[1],
+            "author": row[2],
+            "approved": bool(row[3])
+        }
+        gossip_news(updated_news)
+
     conn.commit()
     conn.close()
 
@@ -166,4 +194,21 @@ def get_pending_news():
     ]
 
     return jsonify(articles)
+
+@bp.route("/verify_news", methods=["POST"])
+def verify_news():
+    news = request.get_json()
+    if not news:
+        return jsonify({"valid": False, "message": "No JSON data provided!"}), 400
+
+    conn = sqlite3.connect("news.db")
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT 1 FROM news WHERE headline = ? AND body = ? AND author = ?",
+        (news["headline"], news["body"], news["author"])
+    )
+    exists = cursor.fetchone() is not None
+    conn.close()
+
+    return jsonify({"valid": exists}), 200
 

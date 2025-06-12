@@ -47,13 +47,20 @@ def sync_news_with_peer(peer_url):
         pass
 
 def is_news_in_db(news_item):
-    """Check if a news item is already in the local database."""
+    """Check if a news item with same content and approval is already in the local database."""
     conn = sqlite3.connect('news.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT 1 FROM news WHERE content = ?', (news_item['content'],))
+    cursor.execute('''
+        SELECT approved FROM news 
+        WHERE headline = ? AND body = ? AND author = ?
+    ''', (news_item['headline'], news_item['body'], news_item['author']))
+    
     result = cursor.fetchone()
     conn.close()
-    return result is not None
+    
+    if result is None:
+        return False
+    return bool(result[0]) == news_item.get('approved', False)
 
 def find_free_port(start_port, max_tries):
     """Find a free port to run the node on."""
@@ -90,4 +97,23 @@ def try_register_with_bootstrap(port):
             print("Failed to connect to bootstrap node.")
     except requests.exceptions.RequestException:
         print("Bootstrap node not reachable, starting new network.")
+
+def has_consensus(news, threshold=0.5):
+    """Query peers to check if they already have this news (majority vote)."""
+    if not other_nodes:
+        return False
+
+    votes = 0
+    total = len(other_nodes)
+
+    for peer in other_nodes:
+        try:
+            response = requests.post(f"{peer}/verify_news", json=news, timeout=3)
+            if response.status_code == 200:
+                if response.json().get("valid"):
+                    votes += 1
+        except requests.exceptions.RequestException:
+            continue
+
+    return (votes / total) >= threshold
 
