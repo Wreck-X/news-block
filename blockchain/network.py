@@ -5,7 +5,7 @@ import socket
 import time
 
 from config import BOOTSTRAP_URL
-from news import get_all_news, insert_news
+from news import insert_news
 
 other_nodes = set()
 
@@ -20,7 +20,7 @@ def gossip_news(news, fanout=2):
             response = requests.post(f"{peer}/gossip", json=news, timeout=3)
             if response.status_code == 200:
                 # Sync the news into the database if it's new
-                insert_news(news['content'])
+                insert_news(news['headline'],news['body'], news['author'])
         except requests.exceptions.RequestException:
             continue
 
@@ -32,7 +32,7 @@ def sync_news_with_peer(peer_url):
             all_news = response.json().get('news', [])
             for news_item in all_news:
                 if not is_news_in_db(news_item):  # Ensure we don't duplicate news
-                    insert_news(news_item['content'])
+                    insert_news(news_item['headline'],news_item['body'],news_item['author'])
     except requests.exceptions.RequestException:
         pass
 
