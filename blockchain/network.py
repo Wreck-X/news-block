@@ -1,119 +1,142 @@
-import sqlite3
-import random
+import logging
+import os
+import socket
 import requests
-import socket 
 import time
+from config import START_PORT, MAX_PORT_TRIES
 
-from config import BOOTSTRAP_URL
-from news import insert_news
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+# Initialize node URL and peers
+this_node_url = None
 other_nodes = set()
 
-def get_local_ip():
-    """Returns the IP address of this machine on the LAN."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-    except Exception:
-        ip = "127.0.0.1"
-    finally:
-        s.close()
-    return ip
-
-def gossip_news(news, fanout=2):
-    """Spread news to a random subset of peers, ensuring the news is synced across nodes."""
-    peers = list(other_nodes)
-    selected_peers = random.sample(peers, min(fanout, len(peers)))
-
-    for peer in selected_peers:
-        try:
-            response = requests.post(f"{peer}/gossip", json=news, timeout=3)
-            if response.status_code == 200:
-                insert_news(news['headline'], news['body'], news['author'])
-        except requests.exceptions.RequestException:
-            continue
-
-def sync_news_with_peer(peer_url):
-    """Synchronize news with a peer by getting their news."""
-    try:
-        response = requests.get(f"{peer_url}/nodes")
-        if response.status_code == 200:
-            all_news = response.json().get('news', [])
-            for news_item in all_news:
-                if not is_news_in_db(news_item):
-                    insert_news(news_item['headline'], news_item['body'], news_item['author'])
-    except requests.exceptions.RequestException:
-        pass
-
-def is_news_in_db(news_item):
-    """Check if a news item with same content and approval is already in the local database."""
-    conn = sqlite3.connect('news.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT approved FROM news 
-        WHERE headline = ? AND body = ? AND author = ?
-    ''', (news_item['headline'], news_item['body'], news_item['author']))
-    
-    result = cursor.fetchone()
-    conn.close()
-    
-    if result is None:
-        return False
-    return bool(result[0]) == news_item.get('approved', False)
-
-def find_free_port(start_port, max_tries):
-    """Find a free port to run the node on."""
-    for port in range(start_port, start_port + max_tries):
+def find_free_port(start_port=START_PORT):
+    """Find a free port starting from start_port."""
+    port = start_port
+    tries = 0
+    while tries < MAX_PORT_TRIES:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
-                s.bind(('0.0.0.0', port))  # binds to all interfaces (0.0.0.0)
-                s.listen(1)
+                s.bind(('localhost', port))
+                logger.info(f"Found free port: {port}")
                 return port
             except OSError:
-                continue
-    raise RuntimeError("No free ports found in range.")
+                port += 1
+                tries += 1
+                if port > 65535:
+                    raise Exception("No free ports available in valid range")
+    raise Exception(f"No free ports found after trying {MAX_PORT_TRIES} ports starting from {start_port}")
 
-def try_register_with_bootstrap(port):
-    """Try registering the node with the bootstrap node."""
-    global this_node_url
-    ip = get_local_ip()
-    this_node_url = f"http://{ip}:{port}"
-
-    if port == 5000:
-        print("Bootstrap node, no need to register.")
-        return
+def try_register_with_bootstrap(bootstrap_url, node_url):
+    """Register this node with a bootstrap node or become bootstrap if none exists."""
+    if bootstrap_url == node_url:
+        logger.info(f"This node {node_url} is the bootstrap node")
+        return True
 
     try:
-        time.sleep(1)
-        response = requests.post(f"{BOOTSTRAP_URL}/register", json={"node_url": this_node_url}, timeout=5)
-        if response.status_code == 200:
-            nodes_info = response.json()
-            other_nodes.update(nodes_info.get('all_nodes', []))
-            other_nodes.add(BOOTSTRAP_URL)
-            other_nodes.discard(this_node_url)
-            print(f"Connected to network via {BOOTSTRAP_URL}")
-        else:
-            print("Failed to connect to bootstrap node.")
-    except requests.exceptions.RequestException:
-        print("Bootstrap node not reachable, starting new network.")
-
-def has_consensus(news, threshold=0.5):
-    """Query peers to check if they already have this news (majority vote)."""
-    if not other_nodes:
+        response = requests.post(f"{bootstrap_url}/register", json={"node_url": node_url}, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        new_nodes = data.get('all_nodes', [])
+        other_nodes.update([n for n in new_nodes if n != node_url])
+        if bootstrap_url != node_url:
+            other_nodes.add(bootstrap_url)
+        logger.info(f"Registered with bootstrap {bootstrap_url}, nodes: {other_nodes}")
+        return True
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to register with bootstrap {bootstrap_url}: {str(e)}")
+        if "Connection refused" in str(e) or "timeout" in str(e):
+            logger.info(f"No bootstrap node at {bootstrap_url}. Becoming bootstrap node.")
+            return True
         return False
 
-    votes = 0
-    total = len(other_nodes)
-
-    for peer in other_nodes:
+def gossip_vote_request(vote_request_data):
+    """Send a vote request to all known peers."""
+    if not other_nodes:
+        logger.info("No peers to send vote request to")
+        return
+    for node in other_nodes:
         try:
-            response = requests.post(f"{peer}/verify_news", json=news, timeout=3)
-            if response.status_code == 200:
-                if response.json().get("valid"):
-                    votes += 1
-        except requests.exceptions.RequestException:
-            continue
+            response = requests.post(f"{node}/vote_request", json=vote_request_data, timeout=5)
+            response.raise_for_status()
+            logger.info(f"Vote request sent to {node}")
+        except Exception as e:
+            logger.error(f"Error sending vote request to {node}: {str(e)}")
 
-    return (votes / total) >= threshold
+def gossip_approved_news(approved_news):
+    """Gossip approved news to all known peers."""
+    for node in other_nodes:
+        try:
+            response = requests.post(f"{node}/approved_news", json=approved_news, timeout=5)
+            response.raise_for_status()
+            logger.info(f"Approved news sent to {node}")
+        except Exception as e:
+            logger.error(f"Error sending approved news to {node}: {str(e)}")
 
+def sync_approved_news_with_peer(peer_url):
+    """Sync approved news with a peer, with retry mechanism."""
+    max_retries = 3
+    retry_delay = 2  # seconds
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(f"{peer_url}/approved_news", timeout=5)
+            response.raise_for_status()
+            news_list = response.json().get('news', [])
+            from news import insert_news
+            for news in news_list:
+                insert_news(news['headline'], news['body'], news['author'], approved=True)
+            logger.info(f"Synced approved news with {peer_url}")
+            return
+        except Exception as e:
+            logger.warning(f"Attempt {attempt + 1}/{max_retries} failed syncing approved news with {peer_url}: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+    logger.error(f"Failed to sync approved news with {peer_url} after {max_retries} attempts")
+
+def sync_pending_news_with_peer(peer_url):
+    """Sync pending news with a peer, with retry mechanism."""
+    max_retries = 3
+    retry_delay = 2  # seconds
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(f"{peer_url}/pending_news", timeout=5)
+            response.raise_for_status()
+            pending_list = response.json().get('pending_news', [])
+            from news import insert_pending_news
+            for pending in pending_list:
+                insert_pending_news(
+                    pending['title'],
+                    pending['description'],
+                    pending['author'],
+                    pending['total_nodes']
+                )
+            logger.info(f"Synced pending news with {peer_url}")
+            return
+        except Exception as e:
+            logger.warning(f"Attempt {attempt + 1}/{max_retries} failed syncing pending news with {peer_url}: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+    logger.error(f"Failed to sync pending news with {peer_url} after {max_retries} attempts")
+
+def get_node_url():
+    """Safely retrieve this_node_url, raising an error if not set."""
+    global this_node_url
+    if this_node_url is None:
+        logger.error("this_node_url is not initialized")
+        raise ValueError("Node URL is not configured")
+    return this_node_url
+
+def initialize_node_url(port):
+    """Set this_node_url based on the chosen port."""
+    global this_node_url
+    bootstrap_url = os.getenv('BOOTSTRAP_URL', 'http://localhost:5000')
+    if bootstrap_url == f'http://localhost:{port}':
+        this_node_url = bootstrap_url
+    else:
+        this_node_url = os.getenv('NODE_URL', f'http://localhost:{port}')
+    if not this_node_url:
+        this_node_url = f'http://localhost:{port}'
+        logger.warning(f"this_node_url set to default: {this_node_url}")
+    logger.info(f"this_node_url initialized as: {this_node_url}")
